@@ -1,0 +1,42 @@
+# Copy to config.yaml (gitignored) and fill in.
+
+poll_interval: 2m
+db_path: pt.db
+
+# Where pt.db lives between runs. Omit for local disk.
+# state:
+#   gcs: { bucket: my-pt-state, object: pt.db }
+
+source:
+  gcp_logging:
+    project: <gcp-project>
+    filter: >-
+      resource.type="cloud_run_revision"
+      AND resource.labels.service_name="internal-api"
+      AND severity>=ERROR
+  # file: internal/parse/testdata/entries.jsonl   # local replay instead
+
+resolver:
+  cloud_run: { project: <gcp-project>, region: <region>, label: commit-sha }
+  # static: { "*": <sha> }   # local runs: treat every revision as this commit
+
+repo:
+  dir: /home/hamzah/code/jetpay/api
+  ignore_revs_file: .git-blame-ignore-revs
+  path_map:
+    /workspace/: src/   # Dockerfile copies src/ into $PROJECT_ROOT=/workspace
+
+owner:
+  identities:
+    - hamzahhaider1@gmail.com
+    # - <work email>
+  subsystems:
+    payment-channels: [src/payments/channels/**]
+    state-mapping: [src/payments/state_mapping/**, src/payments/transaction_state_management.py]
+    batch-payouts:
+      - src/payments/batch_payouts/**
+      - src/endpoints/graphql/flows/payments/transactions/create_batch_*/**
+    pre-auth-captures: [src/payments/domain/captures/**]   # TODO: add the pre-auth paths
+
+notify:
+  gchat_webhook_env: PT_GCHAT_WEBHOOK   # omit to print alerts to stdout
