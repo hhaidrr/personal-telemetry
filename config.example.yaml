@@ -1,7 +1,7 @@
 # Copy to config.yaml (gitignored) and fill in.
 
 poll_interval: 2m
-db_path: pt.db
+db_path: ~/.local/share/pt/pt.db
 
 # Where pt.db lives between runs. Omit for local disk.
 # state:

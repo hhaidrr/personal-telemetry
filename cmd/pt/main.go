@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -53,6 +54,12 @@ func run(ctx context.Context, configPath string, once bool) error {
 	if err != nil {
 		return err
 	}
+
+	unlock, err := lock(cfg.DBPath)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
 	var state stateFile = local.StateFile{}
 	if g := cfg.State.GCS; g != nil {
@@ -104,6 +111,26 @@ func run(ctx context.Context, configPath string, once bool) error {
 		case <-t.C:
 		}
 	}
+}
+
+// A second pt on the same database would read the same logs and alert twice.
+// The kernel drops the lock when the process exits, however it exits.
+func lock(dbPath string) (unlock func(), err error) {
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(dbPath+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, fmt.Errorf("another pt is already running on %s (systemctl --user status pt)", dbPath)
+		}
+		return nil, fmt.Errorf("lock %s: %w", dbPath, err)
+	}
+	return func() { f.Close() }, nil
 }
 
 // Read-only access with the user's own Application Default Credentials.
