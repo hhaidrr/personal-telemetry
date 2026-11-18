@@ -8,13 +8,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
+	"github.com/hhaidrr/personal-telemetry/internal/adapters/notify/text"
 	"github.com/hhaidrr/personal-telemetry/internal/pipeline"
 )
-
-const maxMessageLen = 500
 
 type Notifier struct {
 	WebhookURL string
@@ -24,7 +22,7 @@ type Notifier struct {
 var _ pipeline.Notifier = (*Notifier)(nil)
 
 func (n *Notifier) Notify(ctx context.Context, a pipeline.Alert) error {
-	body, err := json.Marshal(map[string]string{"text": message(a)})
+	body, err := json.Marshal(map[string]string{"text": text.Format(a)})
 	if err != nil {
 		return err
 	}
@@ -54,43 +52,4 @@ func (n *Notifier) Notify(ctx context.Context, a pipeline.Alert) error {
 func threadedURL(webhook, fingerprint string) string {
 	return webhook + "&threadKey=" + url.QueryEscape(fingerprint) +
 		"&messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD"
-}
-
-func message(a pipeline.Alert) string {
-	o := a.Occurrence
-	m := o.Match
-	excType := o.ExcType
-	if excType == "" {
-		excType = "error"
-	}
-
-	var b strings.Builder
-	fmt.Fprintf(&b, "*%s* · %s in `%s:%d` (%s)\n", m.Tier, excType, m.Frame.Path, m.Frame.Line, m.Frame.Func)
-	if msg := truncate(a.Message, maxMessageLen); msg != "" {
-		fmt.Fprintf(&b, "```%s```\n", msg)
-	}
-	if m.Subsystem != "" {
-		fmt.Fprintf(&b, "%s · ", m.Subsystem)
-	}
-	fmt.Fprintf(&b, "seen %d× since %s · %s@%s", a.State.Count, a.State.FirstSeen.UTC().Format("2006-01-02 15:04 UTC"), o.Revision, shortSHA(o.SHA))
-	if o.TraceID != "" {
-		fmt.Fprintf(&b, "\ntrace: %s", o.TraceID)
-	}
-	return b.String()
-}
-
-func truncate(s string, n int) string {
-	s = strings.TrimSpace(s)
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n]) + "…"
-}
-
-func shortSHA(sha string) string {
-	if len(sha) > 7 {
-		return sha[:7]
-	}
-	return sha
 }

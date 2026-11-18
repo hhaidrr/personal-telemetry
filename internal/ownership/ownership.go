@@ -33,6 +33,9 @@ type Match struct {
 	Subsystem string
 }
 
+// Authors returns everyone a line can be credited to. Different blame
+// strategies disagree on moved or copied code, and the line counts as the
+// owner's if any of them says so.
 type Blamer interface {
-	Author(ctx context.Context, sha, path string, line int) (string, error)
+	Authors(ctx context.Context, sha, path string, line int) ([]string, error)
 }

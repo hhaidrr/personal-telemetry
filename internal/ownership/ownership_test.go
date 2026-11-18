@@ -49,13 +49,13 @@ func TestGlobMatch(t *testing.T) {
 	}
 }
 
-type fakeBlamer map[string]string
+type fakeBlamer map[string][]string
 
-func (f fakeBlamer) Author(_ context.Context, _, path string, line int) (string, error) {
+func (f fakeBlamer) Authors(_ context.Context, _, path string, line int) ([]string, error) {
 	if a, ok := f[key(path, line)]; ok {
 		return a, nil
 	}
-	return "teammate@example.com", nil
+	return []string{"teammate@example.com"}, nil
 }
 
 func key(path string, line int) string { return path + ":" + strconv.Itoa(line) }
@@ -75,14 +75,19 @@ func TestMatcher(t *testing.T) {
 	}{
 		{
 			name:  "owner wrote the deepest in-repo line",
-			blame: fakeBlamer{"src/payments/repository.py:40": "Me@Example.com"},
+			blame: fakeBlamer{"src/payments/repository.py:40": {"Me@Example.com"}},
 			want:  Match{Tier: Primary, Frame: event.Frame{Path: "src/payments/repository.py", Line: 40, Func: "save"}},
 		},
 		{
 			name:  "owner wrote a call site further out",
-			blame: fakeBlamer{"src/payments/channels/router.py:7": "me@example.com"},
+			blame: fakeBlamer{"src/payments/channels/router.py:7": {"me@example.com"}},
 			want: Match{Tier: Secondary, Subsystem: "payment-channels",
 				Frame: event.Frame{Path: "src/payments/channels/router.py", Line: 7, Func: "route"}},
+		},
+		{
+			name:  "owner moved the line here even though copy detection credits its origin",
+			blame: fakeBlamer{"src/payments/repository.py:40": {"teammate@example.com", "me@example.com"}},
+			want:  Match{Tier: Primary, Frame: event.Frame{Path: "src/payments/repository.py", Line: 40, Func: "save"}},
 		},
 		{
 			name:  "nobody's line is the owner's, but a frame is in a sub-system",
@@ -124,8 +129,8 @@ func TestMatcherNoMatch(t *testing.T) {
 
 type errBlamer struct{}
 
-func (errBlamer) Author(context.Context, string, string, int) (string, error) {
-	return "", errors.New("no such path at commit")
+func (errBlamer) Authors(context.Context, string, string, int) ([]string, error) {
+	return nil, errors.New("no such path at commit")
 }
 
 func TestMatcherBlameError(t *testing.T) {

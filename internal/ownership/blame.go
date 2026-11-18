@@ -3,6 +3,7 @@ package ownership
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/hhaidrr/personal-telemetry/internal/event"
@@ -25,11 +26,11 @@ func (m *Matcher) Match(ctx context.Context, sha string, frames []event.Frame) (
 	}
 
 	for i, f := range inRepo {
-		author, err := m.Blamer.Author(ctx, sha, f.Path, f.Line)
+		authors, err := m.Blamer.Authors(ctx, sha, f.Path, f.Line)
 		if err != nil {
 			return Match{}, fmt.Errorf("blame %s:%d at %s: %w", f.Path, f.Line, sha, err)
 		}
-		if m.Identities[strings.ToLower(author)] {
+		if slices.ContainsFunc(authors, func(a string) bool { return m.Identities[strings.ToLower(a)] }) {
 			tier := Secondary
 			if i == 0 {
 				tier = Primary

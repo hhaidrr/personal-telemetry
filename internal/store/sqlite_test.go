@@ -41,16 +41,19 @@ func TestCursor(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
 
-	if c, err := s.Cursor(ctx); err != nil || c != "" {
+	if c, err := s.Cursor(ctx, "develop"); err != nil || c != "" {
 		t.Fatalf("fresh cursor = %q, %v; want empty", c, err)
 	}
 	for _, want := range []pipeline.Cursor{"c1", "c2"} {
-		if err := s.SaveCursor(ctx, want); err != nil {
+		if err := s.SaveCursor(ctx, "develop", want); err != nil {
 			t.Fatal(err)
 		}
-		if got, _ := s.Cursor(ctx); got != want {
+		if got, _ := s.Cursor(ctx, "develop"); got != want {
 			t.Errorf("cursor = %q, want %q", got, want)
 		}
+	}
+	if c, _ := s.Cursor(ctx, "production"); c != "" {
+		t.Errorf("production cursor = %q, want its own empty cursor", c)
 	}
 }
 
@@ -87,15 +90,24 @@ func TestMarkNotified(t *testing.T) {
 	if _, err := s.Record(ctx, occurrence("1", t0)); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.MarkNotified(ctx, "ValueError@src/x.py:f", t0); err != nil {
+	if err := s.MarkNotified(ctx, "ValueError@src/x.py:f", "1", t0); err != nil {
 		t.Fatal(err)
 	}
+
 	st, err := s.Record(ctx, occurrence("2", t0))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !st.LastNotified.Equal(t0) {
-		t.Errorf("last notified = %v, want %v", st.LastNotified, t0)
+	if !st.LastNotified.Equal(t0) || st.EventNotified {
+		t.Errorf("new occurrence: last notified = %v, event notified = %v", st.LastNotified, st.EventNotified)
+	}
+
+	st, err = s.Record(ctx, occurrence("1", t0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.Duplicate || !st.EventNotified {
+		t.Errorf("replayed notified occurrence: duplicate = %v, event notified = %v", st.Duplicate, st.EventNotified)
 	}
 }
 

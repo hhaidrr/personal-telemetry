@@ -43,19 +43,19 @@ func Open(path string) (*SQLite, error) {
 
 func (s *SQLite) Close() error { return s.db.Close() }
 
-func (s *SQLite) Cursor(ctx context.Context) (pipeline.Cursor, error) {
+func (s *SQLite) Cursor(ctx context.Context, source string) (pipeline.Cursor, error) {
 	var c string
-	err := s.db.QueryRowContext(ctx, `SELECT value FROM cursor WHERE id = 1`).Scan(&c)
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM cursors WHERE source = ?`, source).Scan(&c)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
 	return pipeline.Cursor(c), err
 }
 
-func (s *SQLite) SaveCursor(ctx context.Context, c pipeline.Cursor) error {
+func (s *SQLite) SaveCursor(ctx context.Context, source string, c pipeline.Cursor) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO cursor (id, value) VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET value = excluded.value`,
-		string(c))
+		`INSERT INTO cursors (source, value) VALUES (?, ?) ON CONFLICT (source) DO UPDATE SET value = excluded.value`,
+		source, string(c))
 	return err
 }
 
@@ -74,10 +74,10 @@ func (s *SQLite) Record(ctx context.Context, o pipeline.Occurrence) (pipeline.Fi
 	at := formatTime(o.Time)
 	m := o.Match
 	res, err := tx.ExecContext(ctx, `
-		INSERT INTO occurrences (id, event_id, fingerprint_id, service, revision, sha, line, time, trace_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO occurrences (id, event_id, fingerprint_id, environment, service, revision, sha, line, time, trace_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (event_id) DO NOTHING`,
-		newID(), o.EventID, fingerprintID, o.Service, o.Revision, o.SHA, m.Frame.Line, at, o.TraceID,
+		newID(), o.EventID, fingerprintID, o.Environment, o.Service, o.Revision, o.SHA, m.Frame.Line, at, o.TraceID,
 	)
 	if err != nil {
 		return pipeline.FingerprintState{}, err
@@ -108,13 +108,30 @@ func (s *SQLite) Record(ctx context.Context, o pipeline.Occurrence) (pipeline.Fi
 		return pipeline.FingerprintState{}, err
 	}
 	state.Duplicate = duplicate
+	if duplicate {
+		if err := tx.QueryRowContext(ctx,
+			`SELECT notified_at IS NOT NULL FROM occurrences WHERE event_id = ?`, o.EventID,
+		).Scan(&state.EventNotified); err != nil {
+			return pipeline.FingerprintState{}, err
+		}
+	}
 	return state, tx.Commit()
 }
 
-func (s *SQLite) MarkNotified(ctx context.Context, fingerprint string, at time.Time) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE fingerprints SET last_notified_at = ? WHERE key = ?`, formatTime(at), fingerprint)
-	return err
+func (s *SQLite) MarkNotified(ctx context.Context, fingerprint, eventID string, at time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	ts := formatTime(at)
+	if _, err := tx.ExecContext(ctx, `UPDATE fingerprints SET last_notified_at = ? WHERE key = ?`, ts, fingerprint); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE occurrences SET notified_at = ? WHERE event_id = ?`, ts, eventID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func upsertFingerprint(ctx context.Context, tx *sql.Tx, o pipeline.Occurrence) (string, error) {

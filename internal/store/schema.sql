@@ -1,6 +1,6 @@
-CREATE TABLE IF NOT EXISTS cursor (
-    id    INTEGER PRIMARY KEY CHECK (id = 1),
-    value TEXT NOT NULL
+CREATE TABLE IF NOT EXISTS cursors (
+    source TEXT PRIMARY KEY,
+    value  TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS fingerprints (
@@ -26,12 +26,14 @@ CREATE TABLE IF NOT EXISTS occurrences (
     id             TEXT PRIMARY KEY,
     event_id       TEXT NOT NULL UNIQUE,
     fingerprint_id TEXT NOT NULL REFERENCES fingerprints(id),
+    environment    TEXT NOT NULL DEFAULT '',
     service        TEXT NOT NULL,
     revision       TEXT NOT NULL,
     sha            TEXT NOT NULL,
     line           INTEGER NOT NULL,
     time           TEXT NOT NULL,
-    trace_id       TEXT NOT NULL DEFAULT ''
+    trace_id       TEXT NOT NULL DEFAULT '',
+    notified_at    TEXT
 );
 
 CREATE INDEX IF NOT EXISTS occurrences_fingerprint ON occurrences(fingerprint_id, time);

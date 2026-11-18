@@ -58,3 +58,18 @@ func TestParsePorcelainEmpty(t *testing.T) {
 		t.Errorf("got %v, %v; want empty", got, err)
 	}
 }
+
+func TestIsHash(t *testing.T) {
+	for rev, want := range map[string]bool{
+		"6585ecf": true,
+		"6585ecfbb4c55b0bb352538e86720ead51f519be": true,
+		"main":        false,
+		"origin/main": false,
+		"abc12":       false,
+		"6585ECF":     false,
+	} {
+		if got := isHash(rev); got != want {
+			t.Errorf("isHash(%q) = %v, want %v", rev, got, want)
+		}
+	}
+}

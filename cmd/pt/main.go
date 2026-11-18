@@ -2,13 +2,17 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/oauth2/google"
 
 	"github.com/hhaidrr/personal-telemetry/internal/adapters/blame/gitcli"
 	"github.com/hhaidrr/personal-telemetry/internal/adapters/notify/gchat"
@@ -67,27 +71,31 @@ func run(ctx context.Context, configPath string, once bool) error {
 	if err != nil {
 		return err
 	}
-	src := newSource(cfg)
+	client, err := newGCPClient(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	sources := newSources(cfg, client)
 	p := &pipeline.Pipeline{
-		Resolver: newResolver(cfg),
-		Matcher:  newMatcher(cfg),
-		Store:    db,
-		Notifier: notifier,
+		Resolver:    newResolver(cfg, client),
+		FallbackRef: cfg.Repo.FallbackRef,
+		Matcher:     newMatcher(cfg),
+		Store:       db,
+		Notifier:    notifier,
 	}
 
 	if once {
-		if err := p.RunOnce(ctx, src); err != nil {
-			return err
-		}
-		return state.Push(ctx, cfg.DBPath)
+		pollErr := poll(ctx, p, sources)
+		return errors.Join(pollErr, state.Push(ctx, cfg.DBPath))
 	}
 
 	t := time.NewTicker(cfg.PollInterval)
 	defer t.Stop()
 	for {
-		if err := p.RunOnce(ctx, src); err != nil {
+		if err := poll(ctx, p, sources); err != nil {
 			fmt.Fprintln(os.Stderr, "pt: poll:", err)
-		} else if err := state.Push(ctx, cfg.DBPath); err != nil {
+		}
+		if err := state.Push(ctx, cfg.DBPath); err != nil {
 			fmt.Fprintln(os.Stderr, "pt: push state:", err)
 		}
 		select {
@@ -98,16 +106,56 @@ func run(ctx context.Context, configPath string, once bool) error {
 	}
 }
 
-func newSource(cfg *config.Config) pipeline.Source {
-	if g := cfg.Source.GCPLogging; g != nil {
-		return &gcplogging.Source{Project: g.Project, Filter: g.Filter}
+// Read-only access with the user's own Application Default Credentials.
+func newGCPClient(ctx context.Context, cfg *config.Config) (*http.Client, error) {
+	if cfg.Source.GCPLogging == nil && cfg.Resolver.CloudRun == nil {
+		return nil, nil
 	}
-	return &file.Source{Path: cfg.Source.File}
+	client, err := google.DefaultClient(ctx, "https://www.googleapis.com/auth/cloud-platform.read-only")
+	if err != nil {
+		return nil, fmt.Errorf("gcp credentials (run `gcloud auth application-default login`): %w", err)
+	}
+	return client, nil
 }
 
-func newResolver(cfg *config.Config) pipeline.Resolver {
-	if c := cfg.Resolver.CloudRun; c != nil {
-		return &cloudrun.Resolver{Project: c.Project, Region: c.Region, Label: c.Label}
+type namedSource struct {
+	name string
+	src  pipeline.Source
+}
+
+// Environments are polled independently: one failing doesn't stop the rest.
+func poll(ctx context.Context, p *pipeline.Pipeline, sources []namedSource) error {
+	var errs []error
+	for _, s := range sources {
+		if err := p.RunOnce(ctx, s.name, s.src); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", s.name, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func newSources(cfg *config.Config, client *http.Client) []namedSource {
+	g := cfg.Source.GCPLogging
+	if g == nil {
+		return []namedSource{{name: "file", src: &file.Source{Path: cfg.Source.File}}}
+	}
+	sources := make([]namedSource, len(g.Environments))
+	for i, e := range g.Environments {
+		sources[i] = namedSource{name: e.Name, src: &gcplogging.Source{
+			Environment: e.Name,
+			Project:     e.Project,
+			Filter:      g.Filter,
+			Overlap:     g.Overlap,
+			Lookback:    g.Lookback,
+			Client:      client,
+		}}
+	}
+	return sources
+}
+
+func newResolver(cfg *config.Config, client *http.Client) pipeline.Resolver {
+	if cfg.Resolver.CloudRun != nil {
+		return &cloudrun.Resolver{Client: client, Image: cfg.Resolver.CloudRun.Image}
 	}
 	return static.Resolver(cfg.Resolver.Static)
 }

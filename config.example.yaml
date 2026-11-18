@@ -9,20 +9,35 @@ db_path: pt.db
 
 source:
   gcp_logging:
-    project: <gcp-project>
-    filter: >-
-      resource.type="cloud_run_revision"
-      AND resource.labels.service_name="internal-api"
-      AND severity>=ERROR
-  # file: internal/parse/testdata/entries.jsonl   # local replay instead
+    # Adding an environment is one more entry; each keeps its own cursor and
+    # alerts separately. Every Cloud Run service and job in the project is read;
+    # the ones not running resolver.cloud_run.image are skipped.
+    environments:
+      - { name: develop,    project: divdot-develop }
+      - { name: testing,    project: jetpay-testing }
+      - { name: demo,       project: jetpay-demo }
+      - { name: staging,    project: jetpay-staging }
+      - { name: production, project: divdot-production }
+    # The default; stderr is where uncaught exceptions (job crashes) land:
+    # filter: (log_id("run.googleapis.com/stdout") OR log_id("run.googleapis.com/stderr")) AND severity>=ERROR
+    # overlap: 10m    # re-read window for entries Cloud Logging indexes late
+    # lookback: 1h    # how far back the very first run starts
+  # file: events.jsonl   # local replay instead
 
+# Revision or job execution -> image digest -> the image's short-SHA tag in
+# Artifact Registry.
 resolver:
-  cloud_run: { project: <gcp-project>, region: <region>, label: commit-sha }
-  # static: { "*": <sha> }   # local runs: treat every revision as this commit
+  cloud_run:
+    image: us-central1-docker.pkg.dev/baseline-shared/internal-api/internal-api
+  # static: { "*": <sha> }   # replaying files: treat every revision as this commit
 
+# pt's own clone, fetched when a deployed commit is missing. One-time setup:
+#   git clone --bare <remote> ~/.local/share/pt/jetpay.git
+#   git -C ~/.local/share/pt/jetpay.git config remote.origin.fetch '+refs/heads/*:refs/heads/*'
 repo:
-  dir: /home/hamzah/code/jetpay/api
-  ignore_revs_file: .git-blame-ignore-revs
+  dir: ~/.local/share/pt/jetpay.git
+  fallback_ref: main   # blamed, and flagged, when the deployed commit can't be resolved
+  # ignore_revs_file: .git-blame-ignore-revs   # only if the repo has one; git fails otherwise
   path_map:
     /workspace/: src/   # Dockerfile copies src/ into $PROJECT_ROOT=/workspace
 
