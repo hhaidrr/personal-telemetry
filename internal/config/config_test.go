@@ -2,6 +2,19 @@ package config
 
 import "testing"
 
+func TestValidateWhenCatchesTypos(t *testing.T) {
+	c := &Config{Source: Source{GCPLogging: &GCPLogging{Environments: []Environment{{Name: "production", Project: "p"}}}}}
+	if err := c.validateWhen("ntfy", When{Environments: []string{"production"}, Tiers: []string{"primary", "unparsed"}}); err != nil {
+		t.Errorf("valid rule rejected: %v", err)
+	}
+	if err := c.validateWhen("ntfy", When{Environments: []string{"prod"}}); err == nil {
+		t.Error("want error for an unknown environment")
+	}
+	if err := c.validateWhen("ntfy", When{Tiers: []string{"primray"}}); err == nil {
+		t.Error("want error for an unknown tier")
+	}
+}
+
 func TestValidateEnvironments(t *testing.T) {
 	ok := Environment{Name: "develop", Project: "divdot-develop"}
 	cases := map[string]struct {

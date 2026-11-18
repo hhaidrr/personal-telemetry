@@ -14,11 +14,7 @@ CREATE TABLE IF NOT EXISTS fingerprints (
     first_seen       TEXT NOT NULL,
     last_seen        TEXT NOT NULL,
     count            INTEGER NOT NULL DEFAULT 0,
-    last_notified_at TEXT,
-    status                   TEXT NOT NULL DEFAULT 'open',
-    escape_category          TEXT NOT NULL DEFAULT '',
-    should_have_caught_layer TEXT NOT NULL DEFAULT '',
-    fix_ref                  TEXT NOT NULL DEFAULT ''
+    last_notified_at TEXT
 );
 
 -- Metadata only: messages may contain customer data.
@@ -33,7 +29,10 @@ CREATE TABLE IF NOT EXISTS occurrences (
     line           INTEGER NOT NULL,
     time           TEXT NOT NULL,
     trace_id       TEXT NOT NULL DEFAULT '',
-    notified_at    TEXT
+    notified_at    TEXT,
+    job            INTEGER NOT NULL DEFAULT 0,
+    project        TEXT NOT NULL DEFAULT '',
+    link           TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS occurrences_fingerprint ON occurrences(fingerprint_id, time);

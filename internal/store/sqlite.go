@@ -29,7 +29,7 @@ var _ pipeline.Store = (*SQLite)(nil)
 // No WAL: the database is shipped between runs as a single file, and WAL keeps
 // committed data in a sidecar file until checkpoint.
 func Open(path string) (*SQLite, error) {
-	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)&_pragma=journal_mode(DELETE)")
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)&_pragma=journal_mode(DELETE)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, err
 	}
@@ -37,6 +37,10 @@ func Open(path string) (*SQLite, error) {
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("store: apply schema: %w", err)
+	}
+	if err := addMissingColumns(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: migrate: %w", err)
 	}
 	return &SQLite{db: db}, nil
 }
@@ -74,10 +78,10 @@ func (s *SQLite) Record(ctx context.Context, o pipeline.Occurrence) (pipeline.Fi
 	at := formatTime(o.Time)
 	m := o.Match
 	res, err := tx.ExecContext(ctx, `
-		INSERT INTO occurrences (id, event_id, fingerprint_id, environment, service, revision, sha, line, time, trace_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO occurrences (id, event_id, fingerprint_id, environment, service, revision, sha, line, time, trace_id, job, project, link)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (event_id) DO NOTHING`,
-		newID(), o.EventID, fingerprintID, o.Environment, o.Service, o.Revision, o.SHA, m.Frame.Line, at, o.TraceID,
+		newID(), o.EventID, fingerprintID, o.Environment, o.Service, o.Revision, o.SHA, m.Frame.Line, at, o.TraceID, o.Job, o.Project, o.Link,
 	)
 	if err != nil {
 		return pipeline.FingerprintState{}, err
@@ -169,6 +173,29 @@ func fingerprintState(ctx context.Context, tx *sql.Tx, id string) (pipeline.Fing
 		state.LastNotified, err = parseTime(lastNotified.String)
 	}
 	return state, err
+}
+
+// CREATE TABLE IF NOT EXISTS leaves existing tables alone, so columns added to
+// schema.sql later are added here for databases created before them.
+var addedColumns = []struct{ table, column, ddl string }{
+	{"occurrences", "job", "INTEGER NOT NULL DEFAULT 0"},
+	{"occurrences", "project", "TEXT NOT NULL DEFAULT ''"},
+	{"occurrences", "link", "TEXT NOT NULL DEFAULT ''"},
+}
+
+func addMissingColumns(db *sql.DB) error {
+	for _, c := range addedColumns {
+		var n int
+		if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info(?) WHERE name = ?`, c.table, c.column).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			if _, err := db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", c.table, c.column, c.ddl)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func newID() string { return uuid.NewV7().String() }

@@ -16,7 +16,9 @@ import (
 	"golang.org/x/oauth2/google"
 
 	"github.com/hhaidrr/personal-telemetry/internal/adapters/blame/gitcli"
-	"github.com/hhaidrr/personal-telemetry/internal/adapters/notify/gchat"
+	"github.com/hhaidrr/personal-telemetry/internal/adapters/notify/desktop"
+	"github.com/hhaidrr/personal-telemetry/internal/adapters/notify/ntfy"
+	"github.com/hhaidrr/personal-telemetry/internal/adapters/notify/route"
 	"github.com/hhaidrr/personal-telemetry/internal/adapters/notify/stdout"
 	"github.com/hhaidrr/personal-telemetry/internal/adapters/resolve/cloudrun"
 	"github.com/hhaidrr/personal-telemetry/internal/adapters/resolve/static"
@@ -25,9 +27,12 @@ import (
 	"github.com/hhaidrr/personal-telemetry/internal/adapters/statefile/gcs"
 	"github.com/hhaidrr/personal-telemetry/internal/adapters/statefile/local"
 	"github.com/hhaidrr/personal-telemetry/internal/config"
+	"github.com/hhaidrr/personal-telemetry/internal/event"
+	"github.com/hhaidrr/personal-telemetry/internal/health"
 	"github.com/hhaidrr/personal-telemetry/internal/ownership"
 	"github.com/hhaidrr/personal-telemetry/internal/pipeline"
 	"github.com/hhaidrr/personal-telemetry/internal/store"
+	"github.com/hhaidrr/personal-telemetry/internal/tui"
 )
 
 type stateFile interface {
@@ -35,18 +40,83 @@ type stateFile interface {
 	Push(ctx context.Context, dbPath string) error
 }
 
+const usage = `usage: pt [command] [-config path]
+
+commands:
+  (none)       open the terminal interface
+  run          poll the logs and send alerts (what the background service runs)
+  test-notify  send a sample alert through every notification channel
+`
+
 func main() {
-	configPath := flag.String("config", "config.yaml", "path to config file")
-	once := flag.Bool("once", false, "run a single poll and exit (for scheduled jobs)")
-	flag.Parse()
+	cmd, args := "tui", os.Args[1:]
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		cmd, args = args[0], args[1:]
+	}
+	fs := flag.NewFlagSet("pt "+cmd, flag.ExitOnError)
+	fs.Usage = func() { fmt.Fprint(os.Stderr, usage); fs.PrintDefaults() }
+	configPath := fs.String("config", defaultConfigPath(), "path to config file")
+	once := false
+	if cmd == "run" {
+		fs.BoolVar(&once, "once", false, "run a single poll and exit")
+	}
+	fs.Parse(args)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := run(ctx, *configPath, *once); err != nil {
+	var err error
+	switch cmd {
+	case "tui":
+		err = runTUI(ctx, *configPath)
+	case "run":
+		err = run(ctx, *configPath, once)
+	case "test-notify":
+		err = sendTestAlert(ctx, *configPath)
+	default:
+		fs.Usage()
+		os.Exit(2)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "pt:", err)
 		os.Exit(1)
 	}
+}
+
+func defaultConfigPath() string {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "config.yaml"
+	}
+	return filepath.Join(dir, "pt", "config.yaml")
+}
+
+func runTUI(ctx context.Context, configPath string) error {
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return err
+	}
+	db, err := store.Open(cfg.DBPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	var envs []string
+	var message tui.MessageFunc
+	if g := cfg.Source.GCPLogging; g != nil {
+		for _, e := range g.Environments {
+			envs = append(envs, e.Name)
+		}
+		client, clientErr := newGCPClient(ctx, cfg)
+		message = func(ctx context.Context, project, eventID string) (string, error) {
+			if clientErr != nil {
+				return "", clientErr
+			}
+			return gcplogging.Message(ctx, client, project, eventID)
+		}
+	}
+	return tui.Run(ctx, db, message, tui.Options{Environments: envs, Subsystems: cfg.Owner.Subsystems, Ignore: cfg.Owner.Ignore})
 }
 
 func run(ctx context.Context, configPath string, once bool) error {
@@ -98,9 +168,16 @@ func run(ctx context.Context, configPath string, once bool) error {
 
 	t := time.NewTicker(cfg.PollInterval)
 	defer t.Stop()
+	monitor := &health.Monitor{}
 	for {
-		if err := poll(ctx, p, sources); err != nil {
+		err := poll(ctx, p, sources)
+		if err != nil {
 			fmt.Fprintln(os.Stderr, "pt: poll:", err)
+		}
+		if a := monitor.Observe(err, time.Now()); a != nil && ctx.Err() == nil {
+			if err := notifier.Notify(ctx, *a); err != nil {
+				fmt.Fprintln(os.Stderr, "pt: notify about pt itself:", err)
+			}
 		}
 		if err := state.Push(ctx, cfg.DBPath); err != nil {
 			fmt.Fprintln(os.Stderr, "pt: push state:", err)
@@ -196,18 +273,47 @@ func newMatcher(cfg *config.Config) *ownership.Matcher {
 		Blamer:     &gitcli.Blamer{RepoDir: cfg.Repo.Dir, IgnoreRevsFile: cfg.Repo.IgnoreRevsFile},
 		Identities: ids,
 		Subsystems: cfg.Owner.Subsystems,
+		Ignore:     cfg.Owner.Ignore,
 		PathMap:    cfg.Repo.PathMap,
 	}
 }
 
 func newNotifier(cfg *config.Config) (pipeline.Notifier, error) {
-	env := cfg.Notify.GChatWebhookEnv
-	if env == "" {
-		return stdout.Notifier{}, nil
+	routes := route.Notifier{{Name: "stdout", Notifier: stdout.Notifier{}}}
+	if d := cfg.Notify.Desktop; d != nil {
+		routes = append(routes, route.Route{Name: "desktop", Notifier: desktop.Notifier{}, When: route.When(d.When)})
 	}
-	webhook := os.Getenv(env)
-	if webhook == "" {
-		return nil, fmt.Errorf("notify: %s is not set", env)
+	if n := cfg.Notify.Ntfy; n != nil {
+		topic := os.Getenv(n.TopicEnv)
+		if topic == "" {
+			return nil, fmt.Errorf("notify: %s is not set", n.TopicEnv)
+		}
+		routes = append(routes, route.Route{Name: "ntfy", Notifier: &ntfy.Notifier{Server: n.Server, Topic: topic}, When: route.When(n.When)})
 	}
-	return &gchat.Notifier{WebhookURL: webhook}, nil
+	return routes, nil
+}
+
+func sendTestAlert(ctx context.Context, configPath string) error {
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return err
+	}
+	n, err := newNotifier(cfg)
+	if err != nil {
+		return err
+	}
+	return n.Notify(ctx, pipeline.Alert{
+		Occurrence: pipeline.Occurrence{
+			ExcType:     "TestAlert",
+			Environment: "production",
+			Match: ownership.Match{
+				Tier:  ownership.Primary,
+				Frame: event.Frame{Path: "src/pt/test.py", Line: 1, Func: "test_notify"},
+			},
+			Revision: "pt-test",
+			Link:     "https://console.cloud.google.com/logs",
+		},
+		State:   pipeline.FingerprintState{Count: 1, FirstSeen: time.Now()},
+		Message: "This is a test alert from pt -test-notify.",
+	})
 }

@@ -58,6 +58,17 @@ func (p *Pipeline) Handle(ctx context.Context, events []event.Event) error {
 
 const unparsedFingerprint = "pt:unparsed"
 
+// Marks a parse failure's own occurrence, so recording it doesn't collide with
+// the same entry's owned-error occurrence.
+const UnparsedEventPrefix = "unparsed:"
+
+func unparsedKey(environment string) string {
+	if environment == "" {
+		return unparsedFingerprint
+	}
+	return environment + "/" + unparsedFingerprint
+}
+
 func (p *Pipeline) handle(ctx context.Context, e event.Event) error {
 	if e.ParseError == "" && len(e.Frames) == 0 {
 		return nil
@@ -91,6 +102,7 @@ func (p *Pipeline) handle(ctx context.Context, e event.Event) error {
 		ExcType:     e.ExcType,
 		Match:       m,
 		Environment: e.Environment,
+		Project:     e.Project,
 		Service:     e.Service,
 		Job:         e.Job,
 		Revision:    e.Revision,
@@ -114,15 +126,16 @@ func (p *Pipeline) resolve(ctx context.Context, e event.Event) (sha string, appr
 	return p.FallbackRef, true, nil
 }
 
-// Parse failures share one fingerprint so a format change alerts once per
-// cooldown instead of once per entry. They never fail the run: that would hold
+// Parse failures share one fingerprint per environment so a format change
+// alerts once per cooldown instead of once per entry. They never fail the run: that would hold
 // the cursor on an entry that can't ever succeed.
 func (p *Pipeline) reportUnparsed(ctx context.Context, e event.Event) error {
 	o := Occurrence{
-		EventID:     "unparsed:" + e.ID,
-		Fingerprint: unparsedFingerprint,
+		EventID:     UnparsedEventPrefix + e.ID,
+		Fingerprint: unparsedKey(e.Environment),
 		ExcType:     e.ExcType,
 		Environment: e.Environment,
+		Project:     e.Project,
 		Service:     e.Service,
 		Job:         e.Job,
 		Revision:    e.Revision,

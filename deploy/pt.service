@@ -3,7 +3,7 @@
 # Install:
 #   go build -o ~/.local/bin/pt ./cmd/pt
 #   mkdir -p ~/.config/pt && cp config.example.yaml ~/.config/pt/config.yaml   # then edit
-#   echo 'PT_GCHAT_WEBHOOK=https://chat.googleapis.com/...' > ~/.config/pt/env && chmod 600 ~/.config/pt/env
+#   echo "PT_NTFY_TOPIC=pt-$(openssl rand -hex 16)" > ~/.config/pt/env && chmod 600 ~/.config/pt/env
 #   ln -s "$PWD/deploy/pt.service" ~/.config/systemd/user/pt.service
 #   systemctl --user daemon-reload && systemctl --user enable --now pt
 #
@@ -15,7 +15,7 @@ Wants=network-online.target
 After=network-online.target
 
 [Service]
-ExecStart=%h/.local/bin/pt -config %h/.config/pt/config.yaml
+ExecStart=%h/.local/bin/pt run
 EnvironmentFile=-%h/.config/pt/env
 Restart=on-failure
 RestartSec=30

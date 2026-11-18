@@ -6,7 +6,8 @@ import (
 	"strings"
 )
 
-func subsystemFor(subsystems map[string][]string, p string) string {
+// The first subsystem, by name, with a glob matching the repo-relative path.
+func SubsystemFor(subsystems map[string][]string, p string) string {
 	names := make([]string, 0, len(subsystems))
 	for name := range subsystems {
 		names = append(names, name)
@@ -20,6 +21,17 @@ func subsystemFor(subsystems map[string][]string, p string) string {
 		}
 	}
 	return ""
+}
+
+// Whether blame on this repo-relative path should be disregarded: it matches
+// an ignore glob and isn't inside an owned subsystem.
+func Ignored(ignore []string, subsystems map[string][]string, p string) bool {
+	for _, glob := range ignore {
+		if globMatch(glob, p) {
+			return SubsystemFor(subsystems, p) == ""
+		}
+	}
+	return false
 }
 
 func globMatch(glob, p string) bool {

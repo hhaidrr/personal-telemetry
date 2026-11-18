@@ -40,6 +40,7 @@ type Occurrence struct {
 	ExcType     string
 	Match       ownership.Match
 	Environment string
+	Project     string
 	Service     string
 	Job         bool
 	Revision    string
@@ -66,4 +67,7 @@ type Alert struct {
 	Message    string
 	// Set for alerts about entries pt could not parse rather than owned errors.
 	ParseError string
+	// Set for alerts about pt itself, e.g. it can't read logs; Occurrence is
+	// then empty and Message has the details.
+	System string
 }

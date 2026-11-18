@@ -45,13 +45,59 @@ owner:
   identities:
     - hamzahhaider1@gmail.com
     # - <work email>
+  # An error is yours if a frame is in one of these subsystems (whoever wrote
+  # the line), or if blame credits you with a frame's line outside the ignore list.
   subsystems:
     payment-channels: [src/payments/channels/**]
     state-mapping: [src/payments/state_mapping/**, src/payments/transaction_state_management.py]
     batch-payouts:
       - src/payments/batch_payouts/**
       - src/endpoints/graphql/flows/payments/transactions/create_batch_*/**
-    pre-auth-captures: [src/payments/domain/captures/**]   # TODO: add the pre-auth paths
+      - src/adyen/adyen_payout_job_runner.py
+      - src/adyen/services/adyen_payout_*.py
+      - src/adyen/management/commands/adyen_initiate_payouts.py
+    payment-movements:
+      - src/payments/domain/movements/**
+      - src/payments/views/movement_detail_builder.py
+      - src/payments/models/movement.py
+    pre-auth-captures:
+      - src/payments/domain/captures/**
+      - src/payments/services/preauth_*.py
+      - src/payments/services/approve_preauth_service.py
+      - src/payments/services/capture_*.py
+      - src/payments/preauth_adjustment_guards.py
+      - src/payments/models/preauth_adjustment.py
+      - src/payments/serializers/*preauth*.py
+      - src/payments/serializers/captures.py
+      - src/payments/management/commands/fail_stale_preauth_adjustments.py
+      - src/adyen/services/adyen_capture_*.py
+      - src/adyen/services/adyen_authorisation_adjustment_event_handler.py
+      - src/adyen/models/adyen_capture.py
+      - src/adyen/models/adyen_authorisation_adjustment.py
+  # Code you've touched but don't own: blame here is disregarded.
+  ignore:
+    # recurring plans
+    - src/payments/recurring_plan_strategy.py
+    - src/endpoints/graphql/flows/payments/recurring/**
+    - src/endpoints/utils/recurring_plan_operations.py
+    - src/adyen/models/adyen_recurring_contract.py
+    # settings and routing
+    - src/api/settings/**
+    - src/api/urls.py
+    # shared plumbing that shows up in everyone's stacks
+    - src/api/log.py
+    - src/core/models/user.py
+    - src/common/rest_framework/authentication.py
 
+# Alerts always go to stdout (journalctl --user -u pt), plus each channel below
+# whose rules match. Rules: environments, and tiers (primary, secondary,
+# subsystem, unparsed); an empty list matches everything.
 notify:
-  gchat_webhook_env: PT_GCHAT_WEBHOOK   # omit to print alerts to stdout
+  desktop: {}
+  # Phone pushes carry metadata only (no log message). The topic is the only
+  # secret on the public server: keep it long and random, in ~/.config/pt/env.
+  ntfy:
+    topic_env: PT_NTFY_TOPIC
+    # server: https://ntfy.sh
+    when:
+      tiers: [primary, subsystem]   # every environment; add environments: [...] to narrow

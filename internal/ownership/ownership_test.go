@@ -115,6 +115,67 @@ func TestMatcher(t *testing.T) {
 	}
 }
 
+func TestMatcherIgnoresDisownedPathsUnlessInASubsystem(t *testing.T) {
+	frames := []event.Frame{
+		{Path: "/workspace/payments/recurring_plan_strategy.py", Line: 121, Func: "execute"},
+		{Path: "/workspace/payments/channels/router.py", Line: 7, Func: "route"},
+		{Path: "/workspace/api/log.py", Line: 542, Func: "wrapper"},
+	}
+	subsystems := map[string][]string{"payment-channels": {"src/payments/channels/**"}}
+	mine := func(paths ...string) fakeBlamer {
+		b := fakeBlamer{}
+		for _, p := range paths {
+			b[p] = []string{"me@example.com"}
+		}
+		return b
+	}
+
+	tests := []struct {
+		name   string
+		blame  fakeBlamer
+		ignore []string
+		want   Match
+	}{
+		{
+			name:   "blame in an ignored path is skipped for the next owned frame",
+			blame:  mine("src/payments/recurring_plan_strategy.py:121", "src/api/log.py:542"),
+			ignore: []string{"src/payments/recurring_*.py"},
+			want:   Match{Tier: Secondary, Frame: event.Frame{Path: "src/api/log.py", Line: 542, Func: "wrapper"}},
+		},
+		{
+			name:   "an ignored path inside a subsystem is still owned",
+			blame:  mine("src/payments/channels/router.py:7"),
+			ignore: []string{"src/payments/**"},
+			want: Match{Tier: Secondary, Subsystem: "payment-channels",
+				Frame: event.Frame{Path: "src/payments/channels/router.py", Line: 7, Func: "route"}},
+		},
+		{
+			name:   "ignored blame falls through to a subsystem frame",
+			blame:  mine("src/payments/recurring_plan_strategy.py:121"),
+			ignore: []string{"src/payments/recurring_*.py"},
+			want:   Match{Tier: Subsystem, Subsystem: "payment-channels", Frame: event.Frame{Path: "src/payments/channels/router.py", Line: 7, Func: "route"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := &Matcher{
+				Blamer:     tt.blame,
+				Identities: map[string]bool{"me@example.com": true},
+				Subsystems: subsystems,
+				Ignore:     tt.ignore,
+				PathMap:    PathMap{"/workspace/": "src/"},
+			}
+			got, err := m.Match(context.Background(), "abc123", frames)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Errorf("got %+v\nwant %+v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMatcherNoMatch(t *testing.T) {
 	m := &Matcher{
 		Blamer:     fakeBlamer{},
@@ -137,5 +198,18 @@ func TestMatcherBlameError(t *testing.T) {
 	m := &Matcher{Blamer: errBlamer{}, PathMap: PathMap{"/workspace/": "src/"}}
 	if _, err := m.Match(context.Background(), "abc123", []event.Frame{{Path: "/workspace/x.py", Line: 1}}); err == nil {
 		t.Error("want blame error to surface")
+	}
+}
+
+func TestMatcherOnlyIgnoredBlameIsNoMatch(t *testing.T) {
+	m := &Matcher{
+		Blamer:     fakeBlamer{"src/payments/recurring_plan_strategy.py:121": {"me@example.com"}},
+		Identities: map[string]bool{"me@example.com": true},
+		Ignore:     []string{"src/payments/recurring_*.py"},
+		PathMap:    PathMap{"/workspace/": "src/"},
+	}
+	got, err := m.Match(context.Background(), "abc123", []event.Frame{{Path: "/workspace/payments/recurring_plan_strategy.py", Line: 121}})
+	if err != nil || got.Tier != None {
+		t.Errorf("got %+v, %v; want no match", got, err)
 	}
 }

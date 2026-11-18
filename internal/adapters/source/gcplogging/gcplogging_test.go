@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/oauth2"
+
 	"github.com/hhaidrr/personal-telemetry/internal/event"
 	"github.com/hhaidrr/personal-telemetry/internal/pipeline"
 )
@@ -202,6 +204,22 @@ func TestTransientErrorsAreRetried(t *testing.T) {
 	}
 }
 
+type rejectedToken struct{ calls int }
+
+func (r *rejectedToken) RoundTrip(*http.Request) (*http.Response, error) {
+	r.calls++
+	return nil, &oauth2.RetrieveError{ErrorCode: "invalid_grant"}
+}
+
+func TestRejectedCredentialsAreNotRetried(t *testing.T) {
+	rt := &rejectedToken{}
+	src := newSource(&fakeAPI{})
+	src.Client = &http.Client{Transport: rt}
+	if _, _, err := src.Fetch(context.Background(), ""); err == nil || rt.calls != 1 {
+		t.Errorf("err = %v after %d calls, want an error after 1", err, rt.calls)
+	}
+}
+
 func TestPermanentErrorsFailWithoutMovingTheCursor(t *testing.T) {
 	cases := map[string]*fakeAPI{
 		"forbidden": {responses: []response{{status: http.StatusForbidden, body: `{"error":"PERMISSION_DENIED"}`}}},
@@ -226,5 +244,19 @@ func TestBadCursorIsAnError(t *testing.T) {
 	_, _, err := newSource(&fakeAPI{}).Fetch(context.Background(), pipeline.Cursor("42"))
 	if err == nil {
 		t.Fatal("want error for a cursor that isn't a timestamp")
+	}
+}
+
+func TestMessageFetchesOneEntryByEventID(t *testing.T) {
+	api := &fakeAPI{responses: []response{page("", entryAt("a", "2026-11-17T11:30:00Z"))}}
+	msg, err := Message(context.Background(), &http.Client{Transport: api}, "proj", "a@2026-11-17T11:30:00Z")
+	if err != nil || msg != "boom" {
+		t.Fatalf("msg = %q, %v", msg, err)
+	}
+	if f := api.requests[0].Filter; f != `insertId="a" AND timestamp="2026-11-17T11:30:00Z"` {
+		t.Errorf("filter = %s", f)
+	}
+	if api.quotaProject != "proj" {
+		t.Errorf("quota project = %q", api.quotaProject)
 	}
 }

@@ -9,11 +9,15 @@ import (
 	"github.com/hhaidrr/personal-telemetry/internal/event"
 )
 
+// A frame is the owner's if it's in one of their subsystems, or if blame
+// credits them with its line and it isn't in a path they've disowned.
 type Matcher struct {
 	Blamer     Blamer
 	Identities map[string]bool
 	Subsystems map[string][]string
-	PathMap    PathMap
+	// Globs for code the owner touched but doesn't own; subsystems override it.
+	Ignore  []string
+	PathMap PathMap
 }
 
 func (m *Matcher) Match(ctx context.Context, sha string, frames []event.Frame) (Match, error) {
@@ -26,6 +30,9 @@ func (m *Matcher) Match(ctx context.Context, sha string, frames []event.Frame) (
 	}
 
 	for i, f := range inRepo {
+		if Ignored(m.Ignore, m.Subsystems, f.Path) {
+			continue
+		}
 		authors, err := m.Blamer.Authors(ctx, sha, f.Path, f.Line)
 		if err != nil {
 			return Match{}, fmt.Errorf("blame %s:%d at %s: %w", f.Path, f.Line, sha, err)
@@ -35,12 +42,12 @@ func (m *Matcher) Match(ctx context.Context, sha string, frames []event.Frame) (
 			if i == 0 {
 				tier = Primary
 			}
-			return Match{Tier: tier, Frame: f, Subsystem: subsystemFor(m.Subsystems, f.Path)}, nil
+			return Match{Tier: tier, Frame: f, Subsystem: SubsystemFor(m.Subsystems, f.Path)}, nil
 		}
 	}
 
 	for _, f := range inRepo {
-		if s := subsystemFor(m.Subsystems, f.Path); s != "" {
+		if s := SubsystemFor(m.Subsystems, f.Path); s != "" {
 			return Match{Tier: Subsystem, Frame: f, Subsystem: s}, nil
 		}
 	}

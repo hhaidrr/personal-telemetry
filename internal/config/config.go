@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -69,14 +70,38 @@ type Repo struct {
 	PathMap        map[string]string `yaml:"path_map"`
 }
 
+// An error is yours if a frame is in one of your subsystems, or if blame
+// credits you with a frame's line and that line isn't in an ignored path.
 type Owner struct {
 	Identities []string            `yaml:"identities"`
 	Subsystems map[string][]string `yaml:"subsystems"`
+	Ignore     []string            `yaml:"ignore"`
 }
 
+// Alerts always go to stdout (the journal under systemd), and to each channel
+// configured here whose rules they match.
 type Notify struct {
-	GChatWebhookEnv string `yaml:"gchat_webhook_env"`
+	Desktop *Desktop `yaml:"desktop"`
+	Ntfy    *Ntfy    `yaml:"ntfy"`
 }
+
+type Desktop struct {
+	When When `yaml:"when"`
+}
+
+type Ntfy struct {
+	Server   string `yaml:"server"`
+	TopicEnv string `yaml:"topic_env"`
+	When     When   `yaml:"when"`
+}
+
+// Empty lists match everything.
+type When struct {
+	Environments []string `yaml:"environments"`
+	Tiers        []string `yaml:"tiers"`
+}
+
+var tiers = []string{"primary", "secondary", "subsystem", "unparsed"}
 
 func Load(path string) (*Config, error) {
 	b, err := os.ReadFile(path)
@@ -142,6 +167,43 @@ func (c *Config) validate() error {
 	}
 	if len(c.Owner.Identities) == 0 {
 		return fmt.Errorf("config: owner.identities is required")
+	}
+	if n := c.Notify.Ntfy; n != nil && n.TopicEnv == "" {
+		return fmt.Errorf("config: notify.ntfy needs topic_env")
+	}
+	for name, w := range c.notifyRules() {
+		if err := c.validateWhen(name, w); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Config) notifyRules() map[string]When {
+	rules := map[string]When{}
+	if d := c.Notify.Desktop; d != nil {
+		rules["desktop"] = d.When
+	}
+	if n := c.Notify.Ntfy; n != nil {
+		rules["ntfy"] = n.When
+	}
+	return rules
+}
+
+// A misspelt environment or tier would silently match nothing.
+func (c *Config) validateWhen(channel string, w When) error {
+	for _, t := range w.Tiers {
+		if !slices.Contains(tiers, t) {
+			return fmt.Errorf("config: notify.%s.when.tiers: unknown tier %q (want one of %v)", channel, t, tiers)
+		}
+	}
+	if c.Source.GCPLogging == nil {
+		return nil
+	}
+	for _, env := range w.Environments {
+		if !slices.ContainsFunc(c.Source.GCPLogging.Environments, func(e Environment) bool { return e.Name == env }) {
+			return fmt.Errorf("config: notify.%s.when.environments: %q isn't a configured environment", channel, env)
+		}
 	}
 	return nil
 }

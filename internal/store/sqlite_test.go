@@ -138,3 +138,67 @@ func TestIDsAreUUIDv7AndLinkOccurrenceToFingerprint(t *testing.T) {
 		t.Errorf("occurrence links to %q, want %q", linkedID, fingerprintID)
 	}
 }
+
+func TestIssuesAndIssueDetail(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	for i, at := range []time.Time{now.Add(-72 * time.Hour), now.Add(-2 * time.Hour), now.Add(-time.Hour)} {
+		o := occurrence(uuid.NewV7().String(), at)
+		o.Environment, o.Project, o.Link, o.Job = "production", "divdot-production", "https://l/"+string(rune('a'+i)), true
+		if i == 2 {
+			o.Revision, o.SHA = "rev-2", "def456"
+		}
+		if _, err := s.Record(ctx, o); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	issues, err := s.Issues(ctx, now.Add(-24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(issues) != 1 {
+		t.Fatalf("got %d issues, want 1", len(issues))
+	}
+	i := issues[0]
+	if i.Count != 3 || i.Recent != 2 || i.Environment != "production" || !i.Job || i.Line != 3 || i.Path != "src/x.py" {
+		t.Errorf("issue = %+v", i)
+	}
+
+	days, err := s.DailyByIssue(ctx, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := 0
+	for _, d := range days {
+		if d.Key != i.Key || d.Environment != "production" {
+			t.Errorf("day = %+v", d)
+		}
+		sum += d.Count
+	}
+	if sum != 3 || len(days) < 2 {
+		t.Errorf("daily rows = %+v, want 3 occurrences over at least 2 days", days)
+	}
+
+	d, err := s.Issue(ctx, i.Key, now.AddDate(0, 0, -6))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Daily) != 7 {
+		t.Errorf("got %d days, want 7 including empty ones", len(d.Daily))
+	}
+	total := 0
+	for _, day := range d.Daily {
+		total += day.Count
+	}
+	if total != 3 {
+		t.Errorf("daily counts sum to %d, want 3", total)
+	}
+	if len(d.Revisions) != 2 || d.Revisions[0].Revision != "rev-2" || d.Revisions[1].Count != 2 {
+		t.Errorf("revisions = %+v", d.Revisions)
+	}
+	if d.Latest.Link != "https://l/c" || d.Latest.Project != "divdot-production" {
+		t.Errorf("latest = %+v", d.Latest)
+	}
+}

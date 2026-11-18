@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/oauth2"
 
 	"github.com/hhaidrr/personal-telemetry/internal/event"
 	"github.com/hhaidrr/personal-telemetry/internal/parse"
@@ -178,7 +181,9 @@ func (s *Source) post(ctx context.Context, body []byte) (page listResponse, retr
 	req.Header.Set("X-Goog-User-Project", s.Project)
 	resp, err := s.client().Do(req)
 	if err != nil {
-		return page, ctx.Err() == nil, fmt.Errorf("gcplogging: %w", err)
+		// A rejected credential won't be accepted on a retry.
+		var tokenErr *oauth2.RetrieveError
+		return page, ctx.Err() == nil && !errors.As(err, &tokenErr), fmt.Errorf("gcplogging: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -270,4 +275,25 @@ func or[T comparable](v, fallback T) T {
 		return fallback
 	}
 	return v
+}
+
+// Message fetches the full message of one entry, by the event ID toEvent gave it.
+func Message(ctx context.Context, client *http.Client, project, eventID string) (string, error) {
+	i := strings.LastIndex(eventID, "@")
+	if i < 0 {
+		return "", fmt.Errorf("gcplogging: %q is not an insertId@timestamp event ID", eventID)
+	}
+	s := &Source{Project: project, Client: client}
+	page, err := s.list(ctx, listRequest{
+		ResourceNames: []string{"projects/" + project},
+		Filter:        fmt.Sprintf("insertId=%q AND timestamp=%q", eventID[:i], eventID[i+1:]),
+		PageSize:      1,
+	})
+	if err != nil {
+		return "", err
+	}
+	if len(page.Entries) == 0 {
+		return "", fmt.Errorf("gcplogging: entry %s not found (past log retention?)", eventID)
+	}
+	return message(page.Entries[0]), nil
 }

@@ -34,11 +34,11 @@ func alert() pipeline.Alert {
 }
 
 func TestFormat(t *testing.T) {
-	want := "*production* · primary · *KeyError* in `src/payments/channels/router.py:42` (route)\n" +
+	want := "production · primary · KeyError in src/payments/channels/router.py:42 (route)\n" +
 		"> Failed to route payment.\n" +
 		"> KeyError: 'interac'\n" +
 		"payment-channels · 3× since 2026-10-30 12:05 UTC · divdot-00042-abc@0c1c5ee\n" +
-		"<https://console.cloud.google.com/logs/query;query=x|Open in Cloud Logging>"
+		"https://console.cloud.google.com/logs/query;query=x"
 	if got := Format(alert()); got != want {
 		t.Errorf("got\n%s\nwant\n%s", got, want)
 	}
@@ -48,24 +48,23 @@ func TestFormatOmitsEmptyParts(t *testing.T) {
 	a := alert()
 	a.Message, a.Occurrence.Match.Subsystem, a.Occurrence.Environment, a.Occurrence.ExcType = "", "", "", ""
 	a.Occurrence.Link, a.Occurrence.TraceID = "", ""
-	want := "primary · *error* in `src/payments/channels/router.py:42` (route)\n" +
+	want := "primary · error in src/payments/channels/router.py:42 (route)\n" +
 		"3× since 2026-10-30 12:05 UTC · divdot-00042-abc@0c1c5ee"
 	if got := Format(a); got != want {
 		t.Errorf("got\n%s\nwant\n%s", got, want)
 	}
 }
 
-func TestFormatSingleLineMessageAndTraceFallback(t *testing.T) {
+func TestFormatFallsBackToTrace(t *testing.T) {
 	a := alert()
-	a.Message, a.Occurrence.Link = "Could not resolve refund", ""
-	got := Format(a)
-	if !strings.Contains(got, "> Could not resolve refund\npayment") || !strings.HasSuffix(got, "\ntrace: t-1") {
+	a.Occurrence.Link = ""
+	if got := Format(a); !strings.HasSuffix(got, "\ntrace: t-1") {
 		t.Errorf("got\n%s", got)
 	}
 }
 
 func TestSummarySkipsTracebackHeaderAndMarkers(t *testing.T) {
-	got := summary("Traceback (most recent call last):\n  File \"/workspace/a.py\", line 54, in f\n" +
+	got := Summary("Traceback (most recent call last):\n  File \"/workspace/a.py\", line 54, in f\n" +
 		"    x = q.get()\n        ^^^^^^^\n")
 	want := []string{`File "/workspace/a.py", line 54, in f`, "x = q.get()"}
 	if !slices.Equal(got, want) {
@@ -73,36 +72,37 @@ func TestSummarySkipsTracebackHeaderAndMarkers(t *testing.T) {
 	}
 }
 
-func TestFormatParseFailure(t *testing.T) {
+func TestSummaryTruncatesLongLines(t *testing.T) {
+	got := Summary(strings.Repeat("é", maxLineLen+10))
+	if want := strings.Repeat("é", maxLineLen) + "…"; len(got) != 1 || got[0] != want {
+		t.Errorf("line not truncated to %d runes", maxLineLen)
+	}
+}
+
+func TestHeadlineForParseFailure(t *testing.T) {
 	a := alert()
 	a.ParseError = "unrecognized python traceback: no exception line"
-	a.Occurrence.Match, a.Occurrence.SHA = ownership.Match{}, ""
-	if got := Format(a); !strings.HasPrefix(got, "*production* · pt couldn't parse a log entry: unrecognized python traceback: no exception line\n") ||
-		!strings.Contains(got, "· divdot-00042-abc\n") {
-		t.Errorf("got\n%s", got)
+	if got := Headline(a); got != "production · pt couldn't parse a log entry: unrecognized python traceback: no exception line" {
+		t.Errorf("got %s", got)
 	}
 }
 
-func TestFormatNamesJobs(t *testing.T) {
+func TestFormatSystemAlert(t *testing.T) {
+	a := pipeline.Alert{System: "pt can't read logs", Message: "Google credentials expired. Run: gcloud auth application-default login\noauth2: invalid_grant"}
+	want := "pt can't read logs\n> Google credentials expired. Run: gcloud auth application-default login\n> oauth2: invalid_grant"
+	if got := Format(a); got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestFooter(t *testing.T) {
 	a := alert()
 	a.Occurrence.Job, a.Occurrence.Revision = true, "adyen-initiate-payouts-divdot-x7k2p"
-	if got := Format(a); !strings.Contains(got, "· job adyen-initiate-payouts-divdot-x7k2p@0c1c5ee") {
-		t.Errorf("got\n%s", got)
+	if got := Footer(a); !strings.HasSuffix(got, "· job adyen-initiate-payouts-divdot-x7k2p@0c1c5ee") {
+		t.Errorf("got %s", got)
 	}
-}
-
-func TestFormatFlagsApproximateBlame(t *testing.T) {
-	a := alert()
 	a.Occurrence.SHA, a.Occurrence.Approximate = "main", true
-	if got := Format(a); !strings.Contains(got, "divdot-00042-abc@main (deployed commit unknown, blamed at this ref)") {
-		t.Errorf("got\n%s", got)
-	}
-}
-
-func TestFormatTruncatesLongLines(t *testing.T) {
-	a := alert()
-	a.Message = strings.Repeat("é", maxLineLen+10)
-	if got := Format(a); !strings.Contains(got, "> "+strings.Repeat("é", maxLineLen)+"…\n") {
-		t.Errorf("line not truncated to %d runes", maxLineLen)
+	if got := Footer(a); !strings.HasSuffix(got, "@main (deployed commit unknown, blamed at this ref)") {
+		t.Errorf("got %s", got)
 	}
 }
