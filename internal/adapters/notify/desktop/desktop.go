@@ -38,7 +38,12 @@ func args(a pipeline.Alert) []string {
 	if a.Occurrence.Environment == "production" || a.System != "" {
 		urgency = "critical"
 	}
+	// Critical notifications stay up for a while, without the daemon's
+	// default for critical (often until clicked) applying to pt's alerts.
 	out := []string{"--app-name=pt", "--urgency=" + urgency}
+	if urgency == "critical" {
+		out = append(out, "--expire-time=30000")
+	}
 	if a.Occurrence.Link != "" {
 		out = append(out, "--action=default=Open in Cloud Logging", "--wait")
 	}

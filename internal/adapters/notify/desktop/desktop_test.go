@@ -21,7 +21,7 @@ func TestArgs(t *testing.T) {
 		Message: "Failed for <a&b>",
 	}
 	want := []string{
-		"--app-name=pt", "--urgency=critical", "--action=default=Open in Cloud Logging", "--wait",
+		"--app-name=pt", "--urgency=critical", "--expire-time=30000", "--action=default=Open in Cloud Logging", "--wait",
 		"production · primary · KeyError in src/job.py:3 (<module>)",
 		"Failed for &lt;a&amp;b&gt;\n0× since 0001-01-01 00:00 UTC · divdot-00042-abc",
 	}
@@ -30,7 +30,7 @@ func TestArgs(t *testing.T) {
 	}
 
 	a.Occurrence.Environment, a.Occurrence.Link = "develop", ""
-	if got := args(a); got[1] != "--urgency=normal" || slices.Contains(got, "--wait") {
+	if got := args(a); got[1] != "--urgency=normal" || slices.Contains(got, "--wait") || slices.Contains(got, "--expire-time=30000") {
 		t.Errorf("non-production without a link: %q", got)
 	}
 }
