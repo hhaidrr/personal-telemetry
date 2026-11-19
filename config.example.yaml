@@ -49,7 +49,7 @@ owner:
   # the line), or if blame credits you with a frame's line outside the ignore list.
   subsystems:
     payment-channels: [src/payments/channels/**]
-    state-mapping: [src/payments/state_mapping/**, src/payments/transaction_state_management.py]
+    state-mapping: [src/payments/state_mapping/**]
     batch-payouts:
       - src/payments/batch_payouts/**
       - src/endpoints/graphql/flows/payments/transactions/create_batch_*/**
@@ -88,6 +88,7 @@ owner:
     - src/api/log.py
     - src/core/models/user.py
     - src/common/rest_framework/authentication.py
+    - src/payments/transaction_state_management.py
 
 # Alerts always go to stdout (journalctl --user -u pt), plus each channel below
 # whose rules match. Rules: environments, and tiers (primary, secondary,
