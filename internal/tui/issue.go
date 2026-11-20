@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/hhaidrr/personal-telemetry/internal/pipeline"
 	"github.com/hhaidrr/personal-telemetry/internal/store"
 )
 
@@ -25,8 +26,8 @@ func (m Model) issueKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case isBack(key):
 		m.screen, m.detail, m.detailKey = m.back, nil, ""
 	case key == "o":
-		if m.detail != nil && m.detail.Latest.Link != "" {
-			m.open(m.detail.Latest.Link)
+		if link := m.latestLink(); link != "" {
+			m.open(link)
 		}
 	default:
 		// The view clamps the scroll to the content, so the cursor bound is loose.
@@ -122,4 +123,17 @@ func or(s, fallback string) string {
 		return fallback
 	}
 	return s
+}
+
+func (m Model) latestLink() string {
+	if m.detail == nil {
+		return ""
+	}
+	latest := m.detail.Latest
+	if m.link != nil && latest.Project != "" {
+		if link := m.link(latest.Project, strings.TrimPrefix(latest.EventID, pipeline.UnparsedEventPrefix)); link != "" {
+			return link
+		}
+	}
+	return latest.Link
 }

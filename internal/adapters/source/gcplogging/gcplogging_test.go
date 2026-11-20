@@ -87,20 +87,20 @@ func TestFetchMapsTextAndJSONPayloads(t *testing.T) {
 	want := []event.Event{
 		{
 			ID: "a@2026-11-17T11:00:00.5Z", Time: time.Date(2026, 11, 17, 11, 0, 0, 5e8, time.UTC), Environment: "develop",
-			Link:    "https://console.cloud.google.com/logs/query;query=insertId=%22a%22;cursorTimestamp=2026-11-17T11:00:00.5Z?project=proj",
+			Link:    Link("proj", "a@2026-11-17T11:00:00.5Z"),
 			Project: "proj", Location: "northamerica-northeast1", Service: "divdot", Revision: "divdot-00023", Severity: "ERROR", TraceID: "abc123", ExcType: "KeyError",
 			Message: "Failed to collect analytics.\nTraceback (most recent call last):\n  File \"/workspace/endpoints/graphql/analytics.py\", line 73, in record_analytics\n    context = {}\nKeyError: 'field_name'",
 			Frames:  []event.Frame{{Path: "/workspace/endpoints/graphql/analytics.py", Line: 73, Func: "record_analytics"}},
 		},
 		{
 			ID: "b@2026-11-17T11:00:01Z", Time: time.Date(2026, 11, 17, 11, 0, 1, 0, time.UTC), Environment: "develop",
-			Link:    "https://console.cloud.google.com/logs/query;query=insertId=%22b%22;cursorTimestamp=2026-11-17T11:00:01Z?project=proj",
+			Link:    Link("proj", "b@2026-11-17T11:00:01Z"),
 			Service: "divdot", Revision: "divdot-00023", Severity: "ERROR", Message: "Could not resolve refund",
 			Frames: []event.Frame{{Path: "/workspace/adyen/handlers/transfer_handling.py", Line: 61, Func: "create_transfer"}},
 		},
 		{
 			ID: "c@2026-11-17T11:00:02Z", Time: time.Date(2026, 11, 17, 11, 0, 2, 0, time.UTC), Environment: "develop",
-			Link:    "https://console.cloud.google.com/logs/query;query=insertId=%22c%22;cursorTimestamp=2026-11-17T11:00:02Z?project=proj",
+			Link:    Link("proj", "c@2026-11-17T11:00:02Z"),
 			Service: "divdot", Revision: "divdot-00023", Severity: "ERROR",
 			Message:    "Traceback (most recent call last):\n  at f (/workspace/a.py:1)\nValueError: bad",
 			ParseError: "unrecognized python traceback: traceback 1 has no frames",
@@ -108,7 +108,7 @@ func TestFetchMapsTextAndJSONPayloads(t *testing.T) {
 		},
 		{
 			ID: "d@2026-11-17T11:00:03Z", Time: time.Date(2026, 11, 17, 11, 0, 3, 0, time.UTC), Environment: "develop",
-			Link:    "https://console.cloud.google.com/logs/query;query=insertId=%22d%22;cursorTimestamp=2026-11-17T11:00:03Z?project=proj",
+			Link:    Link("proj", "d@2026-11-17T11:00:03Z"),
 			Project: "proj", Location: "us-central1", Service: "payouts", Revision: "payouts-zstg5", Job: true, Severity: "ERROR", Message: "boom",
 		},
 	}
@@ -258,5 +258,16 @@ func TestMessageFetchesOneEntryByEventID(t *testing.T) {
 	}
 	if api.quotaProject != "proj" {
 		t.Errorf("quota project = %q", api.quotaProject)
+	}
+}
+
+func TestLinkBoundsTheTimeInTheQuery(t *testing.T) {
+	got := Link("divdot-develop", "6afd2a40@2026-11-18T21:05:35.5Z")
+	want := "https://console.cloud.google.com/logs/query;query=insertId=%226afd2a40%22%20timestamp%3E=%222026-11-18T21:05:34Z%22%20timestamp%3C=%222026-11-18T21:05:36Z%22;cursorTimestamp=2026-11-18T21:05:35.5Z?project=divdot-develop"
+	if got != want {
+		t.Errorf("got  %s\nwant %s", got, want)
+	}
+	if Link("p", "no-timestamp") != "" {
+		t.Error("want no link for a malformed event ID")
 	}
 }

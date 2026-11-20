@@ -116,7 +116,7 @@ func runTUI(ctx context.Context, configPath string) error {
 			return gcplogging.Message(ctx, client, project, eventID)
 		}
 	}
-	return tui.Run(ctx, db, message, tui.Options{Environments: envs, Subsystems: cfg.Owner.Subsystems, Ignore: cfg.Owner.Ignore})
+	return tui.Run(ctx, db, message, tui.Options{Environments: envs, Subsystems: cfg.Owner.Subsystems, Ignore: cfg.Owner.Ignore, Link: gcplogging.Link})
 }
 
 func run(ctx context.Context, configPath string, once bool) error {

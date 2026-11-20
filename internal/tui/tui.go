@@ -37,6 +37,8 @@ type Options struct {
 	// Owned subsystems and ignored paths, as in the config.
 	Subsystems map[string][]string
 	Ignore     []string
+	// Rebuilds an occurrence's link, so links stored by older versions are current.
+	Link func(project, eventID string) string
 }
 
 func Run(ctx context.Context, data Data, message MessageFunc, opts Options) error {
@@ -59,6 +61,7 @@ type Model struct {
 	message MessageFunc
 	now     func() time.Time
 	open    func(url string)
+	link    func(project, eventID string) string
 	refresh time.Duration
 
 	width, height int
@@ -90,6 +93,7 @@ func New(ctx context.Context, data Data, message MessageFunc, opts Options) Mode
 		envs:       append([]string{"all"}, opts.Environments...),
 		subsystems: opts.Subsystems,
 		ignore:     opts.Ignore,
+		link:       opts.Link,
 	}
 }
 

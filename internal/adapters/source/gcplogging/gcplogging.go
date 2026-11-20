@@ -211,7 +211,7 @@ func (s *Source) toEvent(e entry) event.Event {
 		Severity:    e.Severity,
 		Message:     message(e),
 		TraceID:     e.Trace[strings.LastIndex(e.Trace, "/")+1:],
-		Link:        consoleLink(s.Project, e.InsertID, ts),
+		Link:        Link(s.Project, e.InsertID+"@"+ts),
 	}
 	if ev.Job {
 		ev.Service, ev.Revision = e.Resource.Labels["job_name"], e.Labels["run.googleapis.com/execution_name"]
@@ -228,9 +228,29 @@ func (s *Source) toEvent(e entry) event.Event {
 	return ev
 }
 
-func consoleLink(project, insertID, ts string) string {
-	query := url.PathEscape(fmt.Sprintf("insertId=%q", insertID))
+// Link opens one entry, by the event ID toEvent gave it, in Logs Explorer.
+// The timestamp bounds are in the query because otherwise Logs Explorer only
+// searches its default range, the last hour.
+func Link(project, eventID string) string {
+	insertID, ts, ok := cutEventID(eventID)
+	if !ok {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339Nano, ts)
+	if err != nil {
+		return ""
+	}
+	query := url.PathEscape(fmt.Sprintf("insertId=%q timestamp>=%q timestamp<=%q", insertID,
+		t.Add(-time.Second).UTC().Format(time.RFC3339), t.Add(time.Second).UTC().Format(time.RFC3339)))
 	return "https://console.cloud.google.com/logs/query;query=" + query + ";cursorTimestamp=" + ts + "?project=" + url.QueryEscape(project)
+}
+
+func cutEventID(eventID string) (insertID, ts string, ok bool) {
+	i := strings.LastIndex(eventID, "@")
+	if i < 0 {
+		return "", "", false
+	}
+	return eventID[:i], eventID[i+1:], true
 }
 
 func message(e entry) string {
@@ -279,14 +299,14 @@ func or[T comparable](v, fallback T) T {
 
 // Message fetches the full message of one entry, by the event ID toEvent gave it.
 func Message(ctx context.Context, client *http.Client, project, eventID string) (string, error) {
-	i := strings.LastIndex(eventID, "@")
-	if i < 0 {
+	insertID, ts, ok := cutEventID(eventID)
+	if !ok {
 		return "", fmt.Errorf("gcplogging: %q is not an insertId@timestamp event ID", eventID)
 	}
 	s := &Source{Project: project, Client: client}
 	page, err := s.list(ctx, listRequest{
 		ResourceNames: []string{"projects/" + project},
-		Filter:        fmt.Sprintf("insertId=%q AND timestamp=%q", eventID[:i], eventID[i+1:]),
+		Filter:        fmt.Sprintf("insertId=%q AND timestamp=%q", insertID, ts),
 		PageSize:      1,
 	})
 	if err != nil {
